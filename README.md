@@ -7,7 +7,7 @@ Youtube: https://www.youtube.com/@ed__776
 
 Vortex: https://playvortex.io/users/80209/profile
 
-Discord Account if you have Issues / Requests: https://discord.com/users/964600402165268530
+Discord Account: https://discord.com/users/964600402165268530 (Only message for Issues. Suggestions and requests can either go in issues or on a social media)
 
 Tiktok: https://www.tiktok.com/@ed__776
 
