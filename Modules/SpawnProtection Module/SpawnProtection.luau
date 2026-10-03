@@ -19,107 +19,248 @@
 	You are free to use and modify this script as long as the
 	restrictions above are followed.
 
-    Script: SpawnProtection
-    Description: Allows user to manage and create a Spawnprotection system while its not a standalone feature in Vortex.
+	Script: SpawnProtection
+	Description: Allows user to manage and create a SpawnProtection
+	system while it is not a standalone feature in Vortex.
 
 	Copyright © 2026 Ed776
 --]]
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+
 local SpawnProtection = {}
 
-SpawnProtection.Protected = {} :: { [number]: number } -- [UserID]: TimeLeft
+SpawnProtection.Protected = {} :: { [number]: number }
 SpawnProtection.RunLocation = RunService:IsServer() and "Server" or "Client"
 
---== Priv ==--
+--== Private ==--
+
 local _defaultShieldColor = Color3.fromRGB(6, 151, 170)
 local _defaultShieldTime = 3
-local _defaultVisiblity = true
-local networker: RemoteEvent
+local _defaultVisibility = true
+local _tickRate = 0.05
+local _clientShields: { [string]: { Part } } = {}
 
 --== Settings ==--
 
 SpawnProtection._ShieldTime = _defaultShieldTime
-SpawnProtection._ShowShield = _defaultVisiblity
+SpawnProtection._ShowShield = _defaultVisibility
 SpawnProtection._ShieldColor = _defaultShieldColor
 
---== Networking ==--
+--== Private Functions ==--
 
---Update client settings using attributes
-local function UpdateClientSettings(setting: string, value: boolean | number | Color3)
-    networker:SetAttribute(setting, value)
+local function SetProtectionAttribute(player: Player, enabled: boolean)
+	if enabled then
+		player:SetAttribute("SpawnProtection", true)
+	else
+		player:SetAttribute("SpawnProtection", nil)
+		player:SetAttribute("SpawnProtectionEnd", nil)
+	end
 end
 
---Tell client someone needs a shield
-local function NotifyClient(userId: number)
-    if not SpawnProtection._ShowShield then
-        return
-    end
+local function UpdatePlayerAttributes(player: Player)
+	player:SetAttribute("SpawnProtectionColor", SpawnProtection._ShieldColor)
 
-    networker:FireAllClients(userId)
+	player:SetAttribute("SpawnProtectionVisible", SpawnProtection._ShowShield)
 end
 
---== Publics Functions ==--
+--== Public Functions ==--
 
 -- Sets the global shield time length
 function SpawnProtection:SetShieldLength(time: number?)
-    SpawnProtection._ShieldTime = time or _defaultShieldTime
+	if SpawnProtection.RunLocation ~= "Server" then
+		print("Server Only: Settings will automatically update on the client once changed on the server")
+		return
+	end
+
+	SpawnProtection._ShieldTime = time or _defaultShieldTime
 end
 
--- If a player has a shield on, disable it
-function SpawnProtection:DisableUserShied()
-    
+-- Disable a player's shield
+function SpawnProtection:DisableUserShield(userId: number)
+	if SpawnProtection.RunLocation ~= "Server" then
+		print("Server Only: Settings will automatically update on the client once changed on the server")
+		return
+	end
+
+	local player = Players:GetPlayerByUserId(userId)
+
+	if not player then
+		return
+	end
+
+	SpawnProtection.Protected[userId] = nil
+
+	SetProtectionAttribute(player, false)
 end
 
 -- Give a player a shield, or extend a current one
-function SpawnProtection:EnableUserShield()
-    
+function SpawnProtection:EnableUserShield(userId: number)
+	if SpawnProtection.RunLocation ~= "Server" then
+		print("Server Only: Settings will automatically update on the client once changed on the server")
+		return
+	end
+
+	local player = Players:GetPlayerByUserId(userId)
+
+	if not player then
+		return
+	end
+
+	SpawnProtection.Protected[userId] = 0
+
+	UpdatePlayerAttributes(player)
+	SetProtectionAttribute(player, true)
 end
 
--- Whether the client will visually see the shields or not
+-- Whether the client will visually see shields
 function SpawnProtection:ToggleVisuals(toggle: boolean?)
-    SpawnProtection._ShowShield = toggle or _defaultVisiblity
+	if SpawnProtection.RunLocation ~= "Server" then
+		print("Server Only: Settings will automatically update on the client once changed on the server")
+		return
+	end
+
+	SpawnProtection._ShowShield = toggle or _defaultVisibility
+
+	for _, player in Players:GetPlayers() do
+		player:SetAttribute("SpawnProtectionVisible", SpawnProtection._ShowShield)
+	end
 end
 
 -- Sets the color of the visuals
 function SpawnProtection:SetShieldColor(color: Color3)
-    SpawnProtection._ShieldColor = color or _defaultShieldColor
+	if SpawnProtection.RunLocation ~= "Server" then
+		print("Server Only: Settings will automatically update on the client once changed on the server")
+		return
+	end
+
+	SpawnProtection._ShieldColor = color
+
+	for _, player in Players:GetPlayers() do
+		player:SetAttribute("SpawnProtectionColor", color)
+	end
+end
+
+--== Get ==--
+
+function SpawnProtection.IsPlayerProtected(userId: number): boolean
+    if SpawnProtection.Protected[userId] then
+        return true
+    end
+
+    return false
 end
 
 --== Initialization ==--
 
 function SpawnProtection.init()
-
-    -- Networking
-	local _networker: RemoteEvent
+	-- Server:
 	if SpawnProtection.RunLocation == "Server" then
-		_networker = Instance.new("RemoteEvent")
-		_networker.Parent = ReplicatedStorage
-		_networker.Name = "SpawnProtection_Networker"
+		Players.PlayerAdded:Connect(function(player: Player)
+			SpawnProtection.Protected[player.UserId] = nil
+
+			player:SetAttribute("SpawnProtectionVisible", SpawnProtection._ShowShield)
+			player:SetAttribute("SpawnProtectionColor", SpawnProtection._ShieldColor)
+
+            player.CharacterAdded:Connect(function(character: Model)
+                SpawnProtection:EnableUserShield(player.UserId)
+            end)
+		end)
+
+		Players.PlayerRemoving:Connect(function(player: Player)
+			SpawnProtection.Protected[player.UserId] = nil
+		end)
 	else
-		_networker = ReplicatedStorage:WaitForChild("SpawnProtection_Networker") :: RemoteEvent
+		-- Client:
+
+		local function RemoveShield(player: Player)
+			if not _clientShields[player.Name] then
+				return
+			end
+
+			for _, part in _clientShields[player.Name] do
+				part:Destroy()
+			end
+
+			_clientShields[player.Name] = nil
+		end
+
+		local function WatchPlayer(player: Player)
+			local function UpdateShield()
+				local protected = player:GetAttribute("SpawnProtection") == true
+
+				if protected then -- Shield
+					local visible = player:GetAttribute("SpawnProtectionVisible")
+
+					if not visible then
+						return
+					end
+
+					_clientShields[player.Name] = {}
+
+					local color = player:GetAttribute("SpawnProtectionColor") :: Color3 or Color3.fromRGB(255, 255, 255)
+
+					for _, letter in { "A", "B" } do
+						local shield = Instance.new("Part")
+						shield.Size = Vector3.new(5, 5, 5)
+						shield.Name = string.format("Shield%s%s", letter, player.Name)
+						shield.CanCollide = false
+						shield.CastShadow = false
+						shield.Transparency = 0.7
+						shield.Color = color
+                        shield.Parent = workspace
+                        table.insert(_clientShields[player.Name], shield)
+					end
+				else -- Remove Shield
+					RemoveShield(player)
+				end
+			end
+
+			UpdateShield()
+
+			player:GetAttributeChangedSignal("SpawnProtection"):Connect(UpdateShield)
+			player:GetAttributeChangedSignal("SpawnProtectionColor"):Connect(UpdateShield)
+			player:GetAttributeChangedSignal("SpawnProtectionVisible"):Connect(UpdateShield)
+		end
+
+		for _, player in Players:GetPlayers() do
+			WatchPlayer(player)
+		end
+
+		Players.PlayerAdded:Connect(WatchPlayer)
+		Players.PlayerRemoving:Connect(RemoveShield)
 	end
 
-    networker = _networker
+	-- Start loop. You could technically do this in another loop if you want but I just wanted to make it as accessible as possible. Kinda like a plug and play thing
+	task.spawn(function()
+		while true do
+			local dt = task.wait(_tickRate)
 
-    -- Attributes
+			--Server tick upd
+			if SpawnProtection.RunLocation == "Server" then
+				for userId, elapsed in SpawnProtection.Protected do
+					elapsed += dt
 
-    if SpawnProtection.RunLocation == "Server" then
-        
-    end
+					if elapsed >= SpawnProtection._ShieldTime then
+						SpawnProtection.Protected[userId] = nil
 
-    -- Connections
-    
-    Players.PlayerAdded:Connect(function(p: Player)
-        if SpawnProtection.RunLocation == "Server" then
-            SpawnProtection.Protected = 
-        else
+						local player = Players:GetPlayerByUserId(userId)
 
-        end
-    end)
+						if player then
+							SetProtectionAttribute(player, false)
+						end
+					else
+						SpawnProtection.Protected[userId] = elapsed
+					end
+				end
+				return
+			end
 
+			for _, shieldParts in _clientShields do
+                
+			end
+		end
+	end)
 end
-
 return SpawnProtection
