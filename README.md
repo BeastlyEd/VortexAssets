@@ -2,7 +2,7 @@
 Public use assets for Vortex
 
 ## Usage
-TL;DR - You can use these however you like but you cannot sell, redistribute or 
+TL;DR - You can use these however you like but you cannot sell, redistribute or re-upload anything or a modified version.
 
 ## Socials
 
